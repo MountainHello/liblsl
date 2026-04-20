@@ -1,4 +1,4 @@
-name: Build liblsl for ARMv7 (Ubuntu 20.04 compatible)
+name: Build liblsl for ARMv7 (Docker Ubuntu 20.04)
 
 on:
   workflow_dispatch:
@@ -10,52 +10,38 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install GCC 9 and cross compilation toolchain
+      - name: Build in Ubuntu 20.04 container
         run: |
-          # 安装 GCC 9 和 ARM 交叉编译工具链
-          sudo apt-get update
-          sudo apt-get install -y \
-            gcc-9 \
-            g++-9 \
-            gcc-arm-linux-gnueabihf \
-            g++-arm-linux-gnueabihf \
-            cmake \
-            make
-
-          # 设置 GCC 9 为默认编译器（通过 update-alternatives）
-          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-9 90 \
-            --slave /usr/bin/g++ g++ /usr/bin/g++-9
-
-          # 验证 GCC 版本
-          gcc --version
-          g++ --version
-
-      - name: Configure and build
-        run: |
-          mkdir build && cd build
-          cmake .. \
-            -DCMAKE_C_COMPILER=arm-linux-gnueabihf-gcc \
-            -DCMAKE_CXX_COMPILER=arm-linux-gnueabihf-g++ \
-            -DCMAKE_CXX_FLAGS="-D_GLIBCXX_USE_CXX11_ABI=0" \
-            -DCMAKE_C_FLAGS="-march=armv7-a -mfloat-abi=hard" \
-            -DCMAKE_INSTALL_PREFIX=$(pwd)/install \
-            -DBUILD_SHARED_LIBS=ON
-          make -j$(nproc)
-          make install
-
-      - name: Verify compatibility
-        run: |
-          echo "=== 架构验证 ==="
-          file build/install/lib/liblsl.so
-          echo ""
-          echo "=== GLIBC 版本检查 ==="
-          arm-linux-gnueabihf-readelf -V build/install/lib/liblsl.so | grep GLIBC || echo "无 GLIBC 依赖"
-
-      - name: Package artifacts
-        run: |
-          cd build/install
-          tar -czvf ../../liblsl-armv7-ubuntu20.tar.gz .
-          cd ../..
+          docker run --rm \
+            -v $(pwd):/workspace \
+            -w /workspace \
+            ubuntu:20.04 \
+            bash -c "
+              # 更新并安装依赖
+              apt-get update
+              apt-get install -y --no-install-recommends \
+                build-essential \
+                cmake \
+                gcc-arm-linux-gnueabihf \
+                g++-arm-linux-gnueabihf \
+                ca-certificates
+              
+              # 创建构建目录并编译
+              mkdir -p build && cd build
+              cmake .. \
+                -DCMAKE_C_COMPILER=arm-linux-gnueabihf-gcc \
+                -DCMAKE_CXX_COMPILER=arm-linux-gnueabihf-g++ \
+                -DCMAKE_CXX_FLAGS=\"-D_GLIBCXX_USE_CXX11_ABI=0\" \
+                -DCMAKE_C_FLAGS=\"-march=armv7-a -mfloat-abi=hard\" \
+                -DCMAKE_INSTALL_PREFIX=\$(pwd)/install \
+                -DBUILD_SHARED_LIBS=ON
+              make -j\$(nproc)
+              make install
+              
+              # 打包
+              cd install
+              tar -czvf /workspace/liblsl-armv7-ubuntu20.tar.gz .
+            "
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

@@ -1,7 +1,7 @@
-name: 'Build liblsl for ARMv7 (Ubuntu 20.04)'
+name: Build liblsl for ARMv7 (Ubuntu 20.04 compatible)
 
 on:
-  workflow_dispatch:  # 手动触发
+  workflow_dispatch:
 
 jobs:
   build-armv7:
@@ -10,37 +10,55 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 核心步骤：在 ARMv7 + Ubuntu 20.04 容器内执行编译
-      - name: Build in Docker (ARMv7/Ubuntu 20.04)
-        id: build_in_container
-        uses: uraimo/run-on-arch-action@v3
-        with:
-          arch: armv7          # 目标架构
-          distro: ubuntu20.04  # 目标系统版本，这是保证 glibc 兼容性的关键[citation:3]
+      - name: Install GCC 9 and cross compilation toolchain
+        run: |
+          # 安装 GCC 9 和 ARM 交叉编译工具链
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc-9 \
+            g++-9 \
+            gcc-arm-linux-gnueabihf \
+            g++-arm-linux-gnueabihf \
+            cmake \
+            make
 
-          # 在容器内执行的编译命令
-          run: |
-            # 更新软件源并安装依赖
-            apt-get update
-            apt-get install -y cmake build-essential
+          # 设置 GCC 9 为默认编译器（通过 update-alternatives）
+          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-9 90 \
+            --slave /usr/bin/g++ g++ /usr/bin/g++-9
 
-            # 创建构建目录并编译
-            mkdir build && cd build
-            cmake .. -DCMAKE_INSTALL_PREFIX=$(pwd)/install
-            make -j$(nproc)
-            make install
+          # 验证 GCC 版本
+          gcc --version
+          g++ --version
 
-            # 打包编译好的文件
-            cd install
-            tar -czvf /tmp/liblsl-armv7-ubuntu20.tar.gz .
+      - name: Configure and build
+        run: |
+          mkdir build && cd build
+          cmake .. \
+            -DCMAKE_C_COMPILER=arm-linux-gnueabihf-gcc \
+            -DCMAKE_CXX_COMPILER=arm-linux-gnueabihf-g++ \
+            -DCMAKE_CXX_FLAGS="-D_GLIBCXX_USE_CXX11_ABI=0" \
+            -DCMAKE_C_FLAGS="-march=armv7-a -mfloat-abi=hard" \
+            -DCMAKE_INSTALL_PREFIX=$(pwd)/install \
+            -DBUILD_SHARED_LIBS=ON
+          make -j$(nproc)
+          make install
 
-          # 将容器内生成的压缩包保存为 GitHub Actions 的产物
-          env: |
-            # 将容器内的 /tmp 目录映射到宿主机，以便传递文件
-            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify compatibility
+        run: |
+          echo "=== 架构验证 ==="
+          file build/install/lib/liblsl.so
+          echo ""
+          echo "=== GLIBC 版本检查 ==="
+          arm-linux-gnueabihf-readelf -V build/install/lib/liblsl.so | grep GLIBC || echo "无 GLIBC 依赖"
+
+      - name: Package artifacts
+        run: |
+          cd build/install
+          tar -czvf ../../liblsl-armv7-ubuntu20.tar.gz .
+          cd ../..
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: liblsl-armv7-ubuntu20
-          path: /tmp/liblsl-armv7-ubuntu20.tar.gz
+          path: liblsl-armv7-ubuntu20.tar.gz
